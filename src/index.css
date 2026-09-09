@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background-color: #F4F5F7;
+}
+
+.btn-primary {
+  @apply bg-titan-dark text-titan-gold font-semibold px-4 py-2 rounded-md hover:bg-titan-charcoal transition-colors border border-titan-gold/30;
+}
+
+.btn-secondary {
+  @apply bg-white text-titan-steel font-medium px-4 py-2 rounded-md hover:bg-gray-100 transition-colors border border-gray-300;
+}
+
+.card {
+  @apply bg-white rounded-lg shadow-sm border border-gray-200 p-5;
+}
+
+.input-field {
+  @apply w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-titan-gold/50 focus:border-titan-gold;
+}
+
+.label {
+  @apply block text-xs font-medium text-titan-steel mb-1;
+}
+
+table.data-table th {
+  @apply text-left text-xs font-semibold text-titan-steel uppercase tracking-wide px-3 py-2 bg-gray-50 border-b border-gray-200;
+}
+
+table.data-table td {
+  @apply px-3 py-2 text-sm border-b border-gray-100;
+}
