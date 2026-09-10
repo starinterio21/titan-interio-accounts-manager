@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import { compressFileIfImage } from '../lib/imageCompression'
 
 const CATEGORIES = ['Travel / Site Visit', 'Snacks / Food', 'Courier', 'Fuel', 'Office Supplies', 'Repairs', 'Miscellaneous']
 
@@ -43,9 +44,10 @@ export default function Expenses() {
 
     let receiptPath = null
     if (file) {
+      const compressedFile = await compressFileIfImage(file)
       const fileExt = file.name.split('.').pop()
       const filePath = `receipts/${Date.now()}_${Math.random().toString(36).slice(2)}.${fileExt}`
-      const { error: uploadError } = await supabase.storage.from('invoices').upload(filePath, file)
+      const { error: uploadError } = await supabase.storage.from('invoices').upload(filePath, compressedFile)
       if (uploadError) {
         alert('Receipt upload failed: ' + uploadError.message)
         setSaving(false)
