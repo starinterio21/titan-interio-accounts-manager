@@ -8,6 +8,8 @@ export default function Invoices() {
   const { session } = useAuth()
   const [invoices, setInvoices] = useState([])
   const [customers, setCustomers] = useState([])
+  const [catalog, setCatalog] = useState([])
+  const [business, setBusiness] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -16,7 +18,10 @@ export default function Invoices() {
   const [newCustomer, setNewCustomer] = useState('')
   const [showNewCustomer, setShowNewCustomer] = useState(false)
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10))
+  const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
+  const [discount, setDiscount] = useState('')
+  const [gstEnabled, setGstEnabled] = useState(false)
   const [lineItems, setLineItems] = useState([emptyLineItem()])
 
   const [payModal, setPayModal] = useState(null)
@@ -29,17 +34,27 @@ export default function Invoices() {
 
   async function loadAll() {
     setLoading(true)
-    const [invRes, custRes] = await Promise.all([
-      supabase.from('invoices').select('*, customers(name)').order('invoice_date', { ascending: false }),
+    const [invRes, custRes, catRes, bizRes] = await Promise.all([
+      supabase.from('invoices').select('*, customers(name, phone)').order('invoice_date', { ascending: false }),
       supabase.from('customers').select('*').order('name'),
+      supabase.from('items_catalog').select('*').eq('active', true).order('name'),
+      supabase.from('business_settings').select('*').single(),
     ])
     if (invRes.data) setInvoices(invRes.data)
     if (custRes.data) setCustomers(custRes.data)
+    if (catRes.data) setCatalog(catRes.data)
+    if (bizRes.data) setBusiness(bizRes.data)
     setLoading(false)
   }
 
   function updateLineItem(index, field, value) {
     setLineItems((items) => items.map((it, i) => (i === index ? { ...it, [field]: value } : it)))
+  }
+
+  function pickFromCatalog(index, catalogId) {
+    const item = catalog.find((c) => c.id === catalogId)
+    if (!item) return
+    setLineItems((items) => items.map((it, i) => (i === index ? { ...it, description: item.name, rate: item.default_rate } : it)))
   }
 
   function addLineItem() {
@@ -50,7 +65,12 @@ export default function Invoices() {
     setLineItems((items) => items.filter((_, i) => i !== index))
   }
 
-  const total = lineItems.reduce((sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.rate) || 0), 0)
+  const subtotal = lineItems.reduce((sum, it) => sum + (Number(it.quantity) || 0) * (Number(it.rate) || 0), 0)
+  const discountAmt = Number(discount) || 0
+  const afterDiscount = Math.max(subtotal - discountAmt, 0)
+  const cgst = gstEnabled ? afterDiscount * 0.09 : 0
+  const sgst = gstEnabled ? afterDiscount * 0.09 : 0
+  const total = afterDiscount + cgst + sgst
 
   async function handleAddCustomer() {
     if (!newCustomer.trim()) return
@@ -64,7 +84,8 @@ export default function Invoices() {
   }
 
   function resetForm() {
-    setCustomerId(''); setInvoiceDate(new Date().toISOString().slice(0, 10)); setNotes(''); setLineItems([emptyLineItem()])
+    setCustomerId(''); setInvoiceDate(new Date().toISOString().slice(0, 10)); setDueDate('')
+    setNotes(''); setDiscount(''); setGstEnabled(false); setLineItems([emptyLineItem()])
   }
 
   async function handleSave(e) {
@@ -78,8 +99,13 @@ export default function Invoices() {
       invoice_number: invoiceNumber,
       customer_id: customerId,
       invoice_date: invoiceDate,
+      due_date: dueDate || null,
+      discount: discountAmt,
+      gst_enabled: gstEnabled,
+      cgst, sgst,
       total_amount: total,
       notes: notes || null,
+      terms: business?.terms_and_conditions || null,
       created_by: session.user.id,
     }).select().single()
 
@@ -127,12 +153,8 @@ export default function Invoices() {
     }
   }
 
-  async function handlePrintInvoice(invoice) {
-    const { data: items } = await supabase.from('invoice_items').select('*').eq('invoice_id', invoice.id)
-    const { data: customer } = await supabase.from('customers').select('*').eq('id', invoice.customer_id).single()
-
-    const win = window.open('', '_blank')
-    win.document.write(`
+  function buildInvoiceHtml(invoice, items, customer) {
+    return `
       <html>
       <head>
         <title>${invoice.invoice_number}</title>
@@ -146,28 +168,59 @@ export default function Invoices() {
           th { background: #f4f4f4; }
           .total-row { font-weight: bold; font-size: 16px; }
           .meta { display: flex; justify-content: space-between; margin-bottom: 16px; font-size: 14px; }
+          .footer-note { font-size: 12px; color: #666; margin-top: 20px; border-top: 1px solid #eee; padding-top: 12px; }
         </style>
       </head>
       <body>
         <div class="header">
-          <h1>TITAN INTERIO</h1>
-          <p>Modular Kitchen & Aluminium Fabrication</p>
+          <h1>${business?.business_name || 'TITAN INTERIO'}</h1>
+          <p>${business?.tagline || ''}</p>
+          <p>${business?.address || ''} ${business?.phone ? '· ' + business.phone : ''}</p>
+          ${invoice.gst_enabled && business?.gstin ? `<p>GSTIN: ${business.gstin}</p>` : ''}
         </div>
         <div class="meta">
-          <div><strong>Invoice #:</strong> ${invoice.invoice_number}<br/><strong>Date:</strong> ${new Date(invoice.invoice_date).toLocaleDateString()}</div>
+          <div><strong>Invoice #:</strong> ${invoice.invoice_number}<br/><strong>Date:</strong> ${new Date(invoice.invoice_date).toLocaleDateString()}${invoice.due_date ? `<br/><strong>Due:</strong> ${new Date(invoice.due_date).toLocaleDateString()}` : ''}</div>
           <div><strong>Bill To:</strong><br/>${customer?.name || ''}<br/>${customer?.phone || ''}<br/>${customer?.address || ''}</div>
         </div>
         <table>
           <tr><th>Description</th><th>Qty</th><th>Rate</th><th>Amount</th></tr>
           ${(items || []).map((it) => `<tr><td>${it.description}</td><td>${it.quantity}</td><td>₹${it.rate}</td><td>₹${it.amount.toLocaleString('en-IN')}</td></tr>`).join('')}
+        </table>
+        <table>
+          ${invoice.discount > 0 ? `<tr><td colspan="3">Discount</td><td>-₹${Number(invoice.discount).toLocaleString('en-IN')}</td></tr>` : ''}
+          ${invoice.gst_enabled ? `<tr><td colspan="3">CGST (9%)</td><td>₹${Number(invoice.cgst).toLocaleString('en-IN')}</td></tr><tr><td colspan="3">SGST (9%)</td><td>₹${Number(invoice.sgst).toLocaleString('en-IN')}</td></tr>` : ''}
           <tr class="total-row"><td colspan="3">Total</td><td>₹${invoice.total_amount.toLocaleString('en-IN')}</td></tr>
         </table>
         ${invoice.notes ? `<p><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
-        <script>window.print()</script>
+        <div class="footer-note">
+          ${business?.bank_details ? `<p><strong>Bank Details:</strong> ${business.bank_details}</p>` : ''}
+          ${business?.upi_id ? `<p><strong>UPI:</strong> ${business.upi_id}</p>` : ''}
+          ${invoice.terms ? `<p><strong>Terms:</strong> ${invoice.terms}</p>` : ''}
+        </div>
       </body>
       </html>
-    `)
+    `
+  }
+
+  async function handlePrintInvoice(invoice) {
+    const { data: items } = await supabase.from('invoice_items').select('*').eq('invoice_id', invoice.id)
+    const { data: customer } = await supabase.from('customers').select('*').eq('id', invoice.customer_id).single()
+    const win = window.open('', '_blank')
+    win.document.write(buildInvoiceHtml(invoice, items, customer) + '<script>window.print()</script>')
     win.document.close()
+  }
+
+  function handleShareWhatsApp(invoice) {
+    const phone = invoice.customers?.phone?.replace(/\D/g, '') || ''
+    const text = encodeURIComponent(
+      `Invoice ${invoice.invoice_number} from ${business?.business_name || 'Titan Interio'}\n` +
+      `Date: ${new Date(invoice.invoice_date).toLocaleDateString()}\n` +
+      `Amount: ₹${invoice.total_amount.toLocaleString('en-IN')}\n` +
+      `Status: ${invoice.status.replace('_', ' ').toUpperCase()}\n\n` +
+      `Please find the detailed invoice attached/printed separately.`
+    )
+    const url = phone ? `https://wa.me/91${phone}?text=${text}` : `https://wa.me/?text=${text}`
+    window.open(url, '_blank')
   }
 
   const totalReceivable = invoices.reduce((sum, inv) => sum + (inv.total_amount - inv.amount_received), 0)
@@ -207,8 +260,9 @@ export default function Invoices() {
                       {inv.status.replace('_', ' ').toUpperCase()}
                     </span>
                   </td>
-                  <td className="space-x-2">
+                  <td className="space-x-2 whitespace-nowrap">
                     <button onClick={() => handlePrintInvoice(inv)} className="text-titan-gold text-xs hover:underline">Print</button>
+                    <button onClick={() => handleShareWhatsApp(inv)} className="text-green-600 text-xs hover:underline">WhatsApp</button>
                     {inv.status !== 'paid' && (
                       <button onClick={() => setPayModal(inv)} className="text-titan-gold text-xs hover:underline">Payment</button>
                     )}
@@ -250,17 +304,29 @@ export default function Invoices() {
                 )}
               </div>
 
-              <div>
-                <label className="label">Invoice Date</label>
-                <input type="date" className="input-field max-w-xs" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Invoice Date</label>
+                  <input type="date" className="input-field" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
+                </div>
+                <div>
+                  <label className="label">Due Date (optional)</label>
+                  <input type="date" className="input-field" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                </div>
               </div>
 
               <div>
                 <label className="label">Line Items</label>
                 <div className="space-y-2">
                   {lineItems.map((item, i) => (
-                    <div key={i} className="flex gap-2 items-start">
-                      <input className="input-field flex-1" placeholder="Description" value={item.description} onChange={(e) => updateLineItem(i, 'description', e.target.value)} />
+                    <div key={i} className="flex gap-2 items-start flex-wrap">
+                      {catalog.length > 0 && (
+                        <select className="input-field w-32" onChange={(e) => pickFromCatalog(i, e.target.value)} defaultValue="">
+                          <option value="" disabled>From catalog</option>
+                          {catalog.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                      )}
+                      <input className="input-field flex-1 min-w-[140px]" placeholder="Description" value={item.description} onChange={(e) => updateLineItem(i, 'description', e.target.value)} />
                       <input type="number" step="any" className="input-field w-20" placeholder="Qty" value={item.quantity} onChange={(e) => updateLineItem(i, 'quantity', e.target.value)} />
                       <input type="number" step="any" className="input-field w-28" placeholder="Rate" value={item.rate} onChange={(e) => updateLineItem(i, 'rate', e.target.value)} />
                       <span className="text-sm py-2 w-24 text-right">₹{((Number(item.quantity) || 0) * (Number(item.rate) || 0)).toLocaleString('en-IN')}</span>
@@ -273,7 +339,25 @@ export default function Invoices() {
                 <button type="button" onClick={addLineItem} className="btn-secondary text-xs mt-2">+ Add Line Item</button>
               </div>
 
-              <p className="text-lg font-semibold text-titan-dark text-right">Total: ₹{total.toLocaleString('en-IN')}</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Discount (₹)</label>
+                  <input type="number" step="any" className="input-field" value={discount} onChange={(e) => setDiscount(e.target.value)} />
+                </div>
+                <div className="flex items-end pb-2">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={gstEnabled} onChange={(e) => setGstEnabled(e.target.checked)} />
+                    Apply GST (9% CGST + 9% SGST)
+                  </label>
+                </div>
+              </div>
+
+              <div className="text-sm space-y-1 text-right">
+                <p>Subtotal: ₹{subtotal.toLocaleString('en-IN')}</p>
+                {discountAmt > 0 && <p>Discount: -₹{discountAmt.toLocaleString('en-IN')}</p>}
+                {gstEnabled && <p>CGST + SGST: ₹{(cgst + sgst).toLocaleString('en-IN')}</p>}
+                <p className="text-lg font-semibold text-titan-dark">Total: ₹{total.toLocaleString('en-IN')}</p>
+              </div>
 
               <div>
                 <label className="label">Notes</label>
