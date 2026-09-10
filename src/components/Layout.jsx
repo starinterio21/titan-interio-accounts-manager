@@ -5,10 +5,16 @@ import { useAuth } from '../context/AuthContext'
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '📊', roles: ['owner'] },
   { to: '/purchases', label: 'Purchases', icon: '🧾', roles: ['owner', 'staff'] },
+  { to: '/quotations', label: 'Quotations', icon: '📋', roles: ['owner'] },
   { to: '/invoices', label: 'Customer Invoices', icon: '📄', roles: ['owner'] },
+  { to: '/challans', label: 'Delivery Challans', icon: '🚚', roles: ['owner'] },
+  { to: '/credit-debit-notes', label: 'Credit/Debit Notes', icon: '🔄', roles: ['owner'] },
+  { to: '/ledger', label: 'Party Ledger', icon: '📒', roles: ['owner'] },
+  { to: '/item-master', label: 'Item Catalog', icon: '📦', roles: ['owner'] },
   { to: '/expenses', label: 'Expenses', icon: '💵', roles: ['owner', 'staff'] },
   { to: '/attendance', label: 'Attendance', icon: '🗓️', roles: ['owner', 'staff'] },
   { to: '/staff', label: 'Staff & Salary', icon: '💰', roles: ['owner'] },
+  { to: '/business-settings', label: 'Business Settings', icon: '⚙️', roles: ['owner'] },
   { to: '/users', label: 'Users', icon: '👥', roles: ['owner'] },
 ]
 
