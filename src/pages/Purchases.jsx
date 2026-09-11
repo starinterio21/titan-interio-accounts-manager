@@ -25,6 +25,9 @@ export default function Purchases() {
   const [payAmount, setPayAmount] = useState('')
   const [payMode, setPayMode] = useState('')
 
+  const [scanning, setScanning] = useState(false)
+  const [scanMessage, setScanMessage] = useState('')
+
   useEffect(() => {
     loadAll()
   }, [])
@@ -55,6 +58,76 @@ export default function Purchases() {
       setNewSupplier('')
       setShowNewSupplier(false)
     }
+  }
+
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result.split(',')[1]) // strip data:...;base64, prefix
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
+  }
+
+  async function handleScanBill(e) {
+    const scanFile = e.target.files[0]
+    if (!scanFile) return
+
+    setScanning(true)
+    setScanMessage('Reading bill...')
+
+    try {
+      const base64Data = await fileToBase64(scanFile)
+      const { data: { session: authSession } } = await supabase.auth.getSession()
+
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/extract-bill`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authSession.access_token}`,
+        },
+        body: JSON.stringify({ base64Data, mimeType: scanFile.type }),
+      })
+
+      const result = await res.json()
+
+      if (!res.ok || !result.success) {
+        setScanMessage('❌ Could not read the bill — please fill in the details manually. ' + (result.error || ''))
+        setScanning(false)
+        return
+      }
+
+      const d = result.data
+
+      // Try to match an existing supplier by name (case-insensitive, partial match)
+      let matchedSupplierId = ''
+      if (d.supplier_name) {
+        const match = suppliers.find((s) => s.name.toLowerCase().includes(d.supplier_name.toLowerCase()) || d.supplier_name.toLowerCase().includes(s.name.toLowerCase()))
+        if (match) matchedSupplierId = match.id
+      }
+
+      setForm((f) => ({
+        ...f,
+        supplier_id: matchedSupplierId,
+        bill_number: d.bill_number || f.bill_number,
+        bill_date: d.bill_date || f.bill_date,
+        description: d.description || f.description,
+        taxable_amount: d.taxable_amount || f.taxable_amount,
+        cgst: d.cgst || f.cgst,
+        sgst: d.sgst || f.sgst,
+        igst: d.igst || f.igst,
+      }))
+
+      if (d.supplier_name && !matchedSupplierId) {
+        setShowNewSupplier(true)
+        setNewSupplier(d.supplier_name)
+      }
+
+      setScanMessage('✅ Filled in from the bill — please check everything below before saving.')
+    } catch (err) {
+      setScanMessage('❌ Something went wrong reading the bill: ' + err.message)
+    }
+    setScanning(false)
   }
 
   async function handleSave(e) {
@@ -134,7 +207,7 @@ export default function Purchases() {
           <h1 className="text-2xl font-bold text-titan-dark">Purchases</h1>
           <p className="text-titan-steel text-sm">{purchases.length} bills · Total owed: ₹{totalPayable.toLocaleString('en-IN')}</p>
         </div>
-        <button onClick={() => setShowModal(true)} className="btn-primary">+ Add Purchase</button>
+        <button onClick={() => { setForm(emptyForm); setFile(null); setScanMessage(''); setShowModal(true) }} className="btn-primary">+ Add Purchase</button>
       </div>
 
       <div className="flex gap-3">
@@ -201,6 +274,22 @@ export default function Purchases() {
               <h2 className="font-semibold text-titan-dark">Add Purchase (Supplier Bill)</h2>
             </div>
             <form onSubmit={handleSave} className="p-5 space-y-3">
+              <div className="bg-titan-gold/10 border border-titan-gold/30 rounded-md p-3">
+                <label className="label mb-2">📷 Scan Bill to Auto-Fill (optional)</label>
+                <input
+                  type="file"
+                  accept=".pdf,image/*"
+                  className="input-field"
+                  onChange={handleScanBill}
+                  disabled={scanning}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Upload a photo or PDF of the bill — details below will be filled in automatically for you to check. The file itself is not saved anywhere.
+                </p>
+                {scanning && <p className="text-xs text-titan-steel mt-2">⏳ Reading bill...</p>}
+                {scanMessage && !scanning && <p className="text-xs mt-2">{scanMessage}</p>}
+              </div>
+
               <div>
                 <label className="label">Supplier</label>
                 {!showNewSupplier ? (
